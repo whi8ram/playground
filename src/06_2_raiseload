@@ -1,0 +1,70 @@
+from typing import Optional
+
+from sqlalchemy import String, ForeignKey, create_engine, select
+from sqlalchemy.orm import Mapped, mapped_column, Session
+from sqlalchemy.orm import (
+    relationship,
+    DeclarativeBase,
+    selectinload,
+    joinedload,
+    contains_eager,
+)
+from sqlalchemy.exc import InvalidRequestError
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class User(Base):
+    __tablename__ = "user_account"
+    __table_args__ = {"extend_existing": True}
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(30))
+    fullname: Mapped[Optional[str]]
+    addresses: Mapped[list["Address"]] = relationship(
+        back_populates="user", lazy="raise_on_sql"
+    )
+
+
+class Address(Base):
+    __tablename__ = "address"
+    __table_args__ = {"extend_existing": True}
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email_address: Mapped[str]
+    user_id: Mapped[int] = mapped_column(ForeignKey("user_account.id"))
+    user: Mapped["User"] = relationship(back_populates="addresses", lazy="raise_on_sql")
+
+
+engine = create_engine("sqlite+pysqlite:///:memory:", echo=True)
+Base.metadata.create_all(engine)
+
+u1 = User(name="pkrabs", fullname="Pearl Krabs")
+a1 = Address(email_address="pearl.krabs@gmail.com", user=u1)
+
+session = Session(engine)
+
+session.add(u1)
+session.commit()
+
+
+## 2.6. Raiseload
+# 한 가지 더 언급할 만한 로더 전략은 raiseload()입니다.
+# 이 옵션은 일반적으로 지연 로드가 오류를 발생시키는 대신 애플리케이션에서 N + 1 문제가 전혀 발생하지 않도록 완전히 차단하는 데 사용됩니다.
+# SQL이 필요한 지연로드를 차단하는 변형과 현재 세션만 참조하는 모든 load 작업을 차단하는 변형이 있다.
+
+
+# 이러한 매핑을 사용하면 애플리케이션이 지연 로딩으로부터 차단되어 특정 쿼리가 로더 전략을 지정해야 함을 나타냅니다:
+u1 = session.execute(select(User)).scalars().first()
+try:
+    print(u1.addresses)
+except InvalidRequestError as e:
+    # sqlalchemy.exc.InvalidRequestError: 'User.addresses' is not available due to lazy='raise_on_sql'
+    print(e)
+
+# 위 예외는 이 컬렉션을 대신 미리 로드해야 함을 나타냅니다:
+u1 = (
+    session.execute(select(User).options(selectinload(User.addresses)))
+    .scalars()
+    .first()
+)
